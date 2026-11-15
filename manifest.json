@@ -557,7 +557,7 @@
       "id": "arzhub",
       "name": "ArzHub",
       "filename": "ArzHub.lua",
-      "version": "1.0.6",
+      "version": "1.0.7",
       "path": "scripts/arzhub.lua",
       "actual": true,
       "changelog": [
@@ -726,6 +726,13 @@
             "В списке скриптов отметка «новый» у недавно вышедших скриптов.",
             "О новом скрипте менеджер один раз напишет в чат при входе в игру."
           ]
+        },
+        {
+          "version": "1.0.7",
+          "date": "2026-11-15",
+          "notes": [
+            "Мелкие исправления и доработки."
+          ]
         }
       ],
       "alt_filenames": []
@@ -755,7 +762,7 @@
     }
   ],
   "ui": {
-    "version": "1.9.0",
+    "version": "1.9.1",
     "path": "hub/hub.dat"
   },
   "deps": {
