@@ -1,6 +1,6 @@
 script_name('ArzHub')
 script_author('ArzHub')
-script_version('1.0.5')
+script_version('1.0.6')
 script_url('https://arzhub.top/hub')
 
 -- In-game manager for the ArzHub scripts: what is installed, what is out, install, update and remove in one click.
@@ -54,7 +54,7 @@ local DL_DIR = DATA_DIR .. '\\dl'
 local CACHE_PATH = DATA_DIR .. '\\cache.json'
 local LOG_PATH = DATA_DIR .. '\\arzhub.log'
 -- The manager's small memory between loads, kept apart from the cache so clearing that is not a new install:
--- id (anonymous install id), updatedTo (version a self-update just put in place), pageFail (why the window page
+-- id (anonymous install id), told (fresh scripts already named in the load line), updatedTo (version a self-update just put in place), pageFail (why the window page
 -- did not download, sent at the next load), <source>StalledAt (when that source stalled a file, see STALL_TTL;
 -- 1.0.4 wrote siteStalledAt), stallReport (the fallback event of a site stall: the held session's stats never left).
 local INI_PATH = DATA_DIR .. '\\ArzHub.ini'
@@ -70,6 +70,10 @@ local TEXT = {
     loadScripts = '. %s: {FFB48A}/hub',
     loadManager = ', вышла {FFB48A}v%s{FFFFFF}. Обновить: {FFB48A}/hub',
     loadOpen = '. Открыть: {FFB48A}/hub',
+    -- A script released lately and not installed, told once: «, новый скрипт X» after updates or the manager, alone as a sentence.
+    loadNewOne = 'новый скрипт {FFB48A}%s{FFFFFF}', loadNewMany = 'новые скрипты {FFB48A}%s{FFFFFF}',
+    loadNewAlone = '. Новый скрипт {FFB48A}%s{FFFFFF}: {FFB48A}/hub', loadNewAloneMany = '. Новые скрипты {FFB48A}%s{FFFFFF}: {FFB48A}/hub',
+    loadManagerNew = ', вышла {FFB48A}v%s{FFFFFF}, %s. Обновить: {FFB48A}/hub',
     selfUpdated = 'Менеджер обновлён до %s.',
     socketFail = 'Не удалось скачать библиотеку LuaSocket для окна. Скачайте архив и распакуйте его в папку moonloader: {FFB48A}' .. URL.socketLib,
     -- Support hears about a breakage; /hub update then delivers the fix to a player whose window cannot open.
@@ -191,6 +195,19 @@ local function versionNum(v)
     local a, b, c = tostring(v or ''):match('^(%d+)%.(%d+)%.(%d+)$')
     if not a then return nil end
     return tonumber(a) * 1000000 + tonumber(b) * 1000 + tonumber(c)
+end
+
+-- A script is new for two weeks after its first release, the earliest changelog date; shown only while not installed.
+local function isFresh(list)
+    local first
+    for _, v in ipairs(type(list) == 'table' and list or {}) do
+        local d = type(v) == 'table' and type(v.date) == 'string' and v.date:match('^%d%d%d%d%-%d%d%-%d%d$')
+        if d and (not first or d < first) then first = d end
+    end
+    if not first then return nil end
+    local y, m, d = first:match('^(%d+)%-(%d+)%-(%d+)$')
+    local age = os.time() - os.time({ year = tonumber(y), month = tonumber(m), day = tonumber(d), hour = 0 })
+    return age < 14 * 86400 or nil
 end
 
 local function urlEncode(s)
@@ -575,9 +592,27 @@ local function startQuery()
 end
 
 local justUpdated = false   -- This copy was just put in place by a self-update.
+local newInstall = false    -- No install id yet: everything is new to this player, the window shows the tags.
+
+-- Names of new scripts to tell about on this load; told= in ArzHub.ini keeps every fresh id already told, the rest drop out.
+local function newScripts()
+    local told, keep, names = {}, {}, {}
+    for id in (state.told or ''):gmatch('[^,]+') do told[id] = true end
+    for _, e in ipairs(catalog and catalog.list or {}) do
+        if e.actual ~= false and isFresh(e.changelog) then
+            keep[#keep + 1] = e.id
+            if not told[e.id] and not newInstall and not scanEntry(e).path then names[#names + 1] = tostring(e.name or e.id) end
+        end
+    end
+    table.sort(keep)
+    local list = table.concat(keep, ',')
+    if list ~= (state.told or '') then setState('told', list) end
+    return #names > 0 and table.concat(names, ', ') or nil, #names
+end
 
 -- One line per load, like the other scripts' «Загружен vX». A count, not names: the window has the list.
 -- Updatable scripts win over a new manager: the window shows its banner anyway.
+-- A new script not installed yet rides at the end of either, once.
 local function loginLine()
     local own = thisScript().version
     local line = (justUpdated and TEXT.loadUpdated or TEXT.loadFirst):format(own)
@@ -589,10 +624,14 @@ local function loginLine()
     end
     local m = catalog and catalog.manager
     local remote = m and versionNum(m.version)
+    local names, count = newScripts()
+    local fresh = names and (count == 1 and TEXT.loadNewOne or TEXT.loadNewMany):format(names)
     if n > 0 then
-        line = line .. TEXT.loadScripts:format(updatesFor(n))
+        line = line .. TEXT.loadScripts:format(updatesFor(n) .. (fresh and ', ' .. fresh or ''))
     elseif remote and remote > (versionNum(own) or 0) then
-        line = line .. TEXT.loadManager:format(m.version)
+        line = line .. (fresh and TEXT.loadManagerNew:format(m.version, fresh) or TEXT.loadManager:format(m.version))
+    elseif names then
+        line = line .. (count == 1 and TEXT.loadNewAlone or TEXT.loadNewAloneMany):format(names)
     else
         line = line .. TEXT.loadOpen
     end
@@ -1121,6 +1160,7 @@ local function entryState(e)
         usage = type(e.usage) == 'string' and e.usage or nil,
         page = type(e.page) == 'string' and e.page or nil,
         commands = cleanCommands(e.commands), changelog = cleanChangelog(e.changelog),
+        fresh = status == 'missing' and isFresh(e.changelog) or nil,
         status = status, localVersion = scan.localVersion,
         twoCopies = scan.alt and { old = basename(scan.alt), new = basename(scan.path) } or nil,
         busy = busy[e.id], result = results[e.id],
@@ -1824,6 +1864,7 @@ function main()
     token = newToken()
     loadState()
     installId = (state.id or ''):match('^%x+$')
+    newInstall = not installId
     if not installId or #installId ~= 32 then
         installId = newToken(32)
         setState('id', installId)
