@@ -742,7 +742,7 @@
       "name": "Cars Plus",
       "filename": "[ArzHub] Cars Plus.lua",
       "alt_filenames": [],
-      "version": "1.0.2",
+      "version": "1.0.3",
       "path": "scripts/cars-plus.lua",
       "actual": true,
       "changelog": [
@@ -767,6 +767,13 @@
           "date": "2026-11-15",
           "notes": [
             "Мелкие исправления и доработки."
+          ]
+        },
+        {
+          "version": "1.0.3",
+          "date": "2026-11-15",
+          "notes": [
+            "Вызов работает, когда часть машин стоит в гараже, на парковке или штрафстоянке."
           ]
         }
       ],

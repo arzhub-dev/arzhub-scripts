@@ -1,6 +1,6 @@
 script_name('Cars Plus')
 script_author('ArzHub')
-script_version('1.0.2')
+script_version('1.0.3')
 script_url('https://arzhub.top/hub/cars-plus')
 
 -- Script page (current version, changelog): https://arzhub.top/hub/cars-plus
@@ -255,8 +255,13 @@ local BOOT_TEMPLATE = [==[
         });
         return n;
     };
-    // Order of the phone's «Мой транспорт»: loaded cars by id, then the rest by id.
-    const isLoaded = (v) => v.status !== 'notLoaded';
+    // Order of the phone's «Мой транспорт»: cars out in the world (a game id plate) by id, then the rest by id.
+    // Not by status: besides loaded/notLoaded there are garages, impound, rent, stolen..., all listed by id below.
+    const gameIdOf = (v) => {
+        const l = (v.labels || []).find((x) => x && x.icon === 'icon-id');
+        return l && /^\d+$/.test(String(l.title)) ? String(l.title) : null;
+    };
+    const isLoaded = (v) => gameIdOf(v) !== null;
     const phoneOrder = () => {
         const all = [...state.byId.values()];
         const byId = (a, b) => a.id - b.id;
@@ -267,8 +272,7 @@ local BOOT_TEMPLATE = [==[
         const row = order.findIndex((v) => v.id === id);
         if (row < 0) return null;
         const v = order[row];
-        const idLabel = isLoaded(v) ? (v.labels || []).find((l) => l && l.icon === 'icon-id') : null;
-        const gameId = idLabel && /^\d+$/.test(String(idLabel.title)) ? String(idLabel.title) : '-';
+        const gameId = gameIdOf(v) || '-';
         return { row, total: order.length, loaded: order.filter(isLoaded).length, gameId };
     };
     // Support trace for last-call.log: the clicked card and the list in the expected phone order, one car per line.
@@ -561,7 +565,6 @@ end
 local PCARS_TITLE = cp('Мой транспорт')
 local CALL_TIMEOUT = 5 -- seconds to wait for the phone dialog.
 local DIALOG_REPLY_DELAY = 0.1 -- seconds; a dialog is never answered from inside its own hook.
-local NOT_LOADED = cp('[Не загружено]')
 
 -- nil, or { row, total, loaded, gameId, title, stage = 'start'|'wait', deadline }.
 local call = nil
@@ -680,10 +683,11 @@ function sampev.onShowDialog(id, style, title, button1, button2, text)
     local rows = {}
     for line in ((text or '') .. '\n'):gmatch('([^\n]*)\n') do rows[#rows + 1] = line end
     while #rows > 0 and rows[#rows] == '' do rows[#rows] = nil end
-    -- Whole shape, not counts: loaded rows on top, every «[Не загружено]» row below them.
+    -- Whole shape, not counts: rows with a game id «Name(714)» on top, rows without one below, whatever their mark
+    -- («[Не загружено]», «[Гараж дома №745]», ...).
     local ok = #rows == c.total and c.row < c.total
     for i = 1, ok and #rows or 0 do
-        if (rows[i]:find(NOT_LOADED, 1, true) ~= nil) ~= (i > c.loaded) then ok = false break end
+        if (rows[i]:find('%(%d+%)') ~= nil) ~= (i <= c.loaded) then ok = false break end
     end
     local target = rows[c.row + 1]
     if ok and c.gameId then
