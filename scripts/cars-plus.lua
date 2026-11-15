@@ -1,6 +1,6 @@
 script_name('Cars Plus')
 script_author('ArzHub')
-script_version('1.0.0')
+script_version('1.0.1')
 script_url('https://arzhub.top/hub/cars-plus')
 
 -- Script page (current version, changelog): https://arzhub.top/hub/cars-plus
@@ -540,7 +540,8 @@ end
 -- CALL: brings a car through the phone app by picking its row in «Мой транспорт»
 -- ============================================================================
 
-local PCARS_DIALOG_ID = 26838
+-- Matched by title, style and our own wait: dialog ids drift with server updates.
+local PCARS_TITLE = cp('Мой транспорт')
 local CALL_TIMEOUT = 5 -- seconds to wait for the phone dialog.
 local DIALOG_REPLY_DELAY = 0.1 -- seconds; a dialog is never answered from inside its own hook.
 local NOT_LOADED = cp('[Не загружено]')
@@ -610,7 +611,7 @@ end
 
 -- Picks the row only when the dialog matches what the page counted; otherwise the player sees it as is.
 function sampev.onShowDialog(id, style, title, button1, button2, text)
-    if id ~= PCARS_DIALOG_ID or not call or call.stage ~= 'wait' then return end
+    if not call or call.stage ~= 'wait' or style ~= 4 or not (title or ''):find(PCARS_TITLE, 1, true) then return end
     local c = call
     call = nil
     -- Empty rows count as rows (the server's listitem does), only the trailing ones are dropped.
