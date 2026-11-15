@@ -721,6 +721,26 @@
         }
       ],
       "alt_filenames": []
+    },
+    {
+      "id": "cars-plus",
+      "name": "Cars Plus",
+      "filename": "[ArzHub] Cars Plus.lua",
+      "alt_filenames": [],
+      "version": "1.0.0",
+      "path": "scripts/cars-plus.lua",
+      "actual": true,
+      "changelog": [
+        {
+          "version": "1.0.0",
+          "date": "2026-11-15",
+          "notes": [
+            "Удобный список машин в «Мои Т/С» (/cars).",
+            "Поиск и сортировка: по названию, по дате добавления, по рейтингу; выбор запоминается.",
+            "Кнопка «Вызвать» на карточке - машина едет к вам."
+          ]
+        }
+      ]
     }
   ],
   "ui": {
