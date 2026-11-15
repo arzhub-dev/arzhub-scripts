@@ -742,7 +742,7 @@
       "name": "Cars Plus",
       "filename": "[ArzHub] Cars Plus.lua",
       "alt_filenames": [],
-      "version": "1.0.1",
+      "version": "1.0.2",
       "path": "scripts/cars-plus.lua",
       "actual": true,
       "changelog": [
@@ -757,6 +757,13 @@
         },
         {
           "version": "1.0.1",
+          "date": "2026-11-15",
+          "notes": [
+            "Мелкие исправления и доработки."
+          ]
+        },
+        {
+          "version": "1.0.2",
           "date": "2026-11-15",
           "notes": [
             "Мелкие исправления и доработки."

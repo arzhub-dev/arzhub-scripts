@@ -1,6 +1,6 @@
 script_name('Cars Plus')
 script_author('ArzHub')
-script_version('1.0.1')
+script_version('1.0.2')
 script_url('https://arzhub.top/hub/cars-plus')
 
 -- Script page (current version, changelog): https://arzhub.top/hub/cars-plus
@@ -39,13 +39,18 @@ local config = inicfg.load({
     }
 }, configPath)
 
-local function saveConfig()
-    -- One level at a time: config\ArzHub may not exist yet either.
+-- One level at a time: config\ArzHub may not exist yet either. Returns config\ArzHub\cars-plus.
+local function ensureConfigDir()
     local dir = getWorkingDirectory() .. '\\config'
     for part in configPath:match('(.+)/'):gmatch('[^/]+') do
         dir = dir .. '\\' .. part
         if not doesDirectoryExist(dir) then createDirectory(dir) end
     end
+    return dir
+end
+
+local function saveConfig()
+    ensureConfigDir()
     inicfg.save(config, configPath)
 end
 
@@ -250,19 +255,29 @@ local BOOT_TEMPLATE = [==[
         });
         return n;
     };
-    // Row of a car in the phone's «Мой транспорт»: loaded cars by id, then the rest by id.
-    const phoneRow = (id) => {
+    // Order of the phone's «Мой транспорт»: loaded cars by id, then the rest by id.
+    const isLoaded = (v) => v.status !== 'notLoaded';
+    const phoneOrder = () => {
         const all = [...state.byId.values()];
-        const isLoaded = (v) => v.status !== 'notLoaded';
         const byId = (a, b) => a.id - b.id;
-        const order = all.filter(isLoaded).sort(byId).concat(all.filter((v) => !isLoaded(v)).sort(byId));
+        return all.filter(isLoaded).sort(byId).concat(all.filter((v) => !isLoaded(v)).sort(byId));
+    };
+    const phoneRow = (id) => {
+        const order = phoneOrder();
         const row = order.findIndex((v) => v.id === id);
         if (row < 0) return null;
         const v = order[row];
         const idLabel = isLoaded(v) ? (v.labels || []).find((l) => l && l.icon === 'icon-id') : null;
         const gameId = idLabel && /^\d+$/.test(String(idLabel.title)) ? String(idLabel.title) : '-';
-        return { row, total: order.length, loaded: all.filter(isLoaded).length, gameId };
+        return { row, total: order.length, loaded: order.filter(isLoaded).length, gameId };
     };
+    // Support trace for last-call.log: the clicked card and the list in the expected phone order, one car per line.
+    const callTrace = (cards, c) => [
+        'card: ' + (c ? JSON.stringify(c.title) + ' id=' + c.id + ' sure=' + c.sure : 'not found')
+            + ', cards ' + cards.length + ', resolved ' + cards.filter((x) => x.sure).length,
+        ...phoneOrder().map((v, i) => [i, 'id=' + v.id, v.status, 'fav=' + (v.favorite || 0), JSON.stringify(String(v.title || '')),
+            (v.labels || []).map((l) => l && l.title).join(' / ')].join(' ')),
+    ].join('\n');
     const readCards = (list) => [...list.children]
         .filter((x) => x.id !== BAR_ID && x.classList.contains('vehicle-menu-list__item'))
         .map(readCard).filter(Boolean);
@@ -339,14 +354,16 @@ local BOOT_TEMPLATE = [==[
     // Which car a card shows is resolved at click time: Svelte reuses cards by position.
     const callFor = (it) => {
         const list = document.querySelector(LIST_SEL);
-        let msg = 'unknown';
+        let msg = 'unknown', trace = 'no list';
         if (list) {
             const all = readCards(list);
             attachIds(all);
             const c = all.find((x) => x.it === it);
             const r = c && c.sure ? phoneRow(c.id) : null;
             if (r) msg = [r.row, r.total, r.loaded, r.gameId, encodeURIComponent(c.title)].join('|');
+            trace = callTrace(all, c);
         }
+        msg += '|' + encodeURIComponent(trace);
         try { window.cef.SendMessage('__PREFIX__call|' + msg, 0); } catch (e) {}
     };
     // Arizona's own «Вызвать за ...» plate marks a car that cannot be called: it is hidden and gets no chip.
@@ -566,6 +583,35 @@ local function sendCefEvent(str)
     raknetDeleteBitStream(bs)
 end
 
+-- Support trace of the last call: config\ArzHub\cars-plus\last-call.log, rewritten on every call and
+-- only read when a player sends it in. Hooks only append; the file is written from the main loop.
+local CALL_LOG_NAME = 'last-call.log'
+local CALL_LOG_WINDOW = 25 -- seconds after the click that dialogs, answers and server lines still go in.
+local callLog = nil -- nil, or { lines, untilAt, dirty }.
+
+local function trace(line)
+    if not callLog or os.clock() > callLog.untilAt then return end
+    callLog.lines[#callLog.lines + 1] = os.date('%H:%M:%S ') .. line
+    callLog.dirty = true
+end
+
+local function traceStart()
+    callLog = { lines = {}, untilAt = os.clock() + CALL_LOG_WINDOW, dirty = true }
+    trace('Cars Plus v' .. thisScript().version)
+end
+
+local function flushTrace()
+    if not callLog or not callLog.dirty then return end
+    callLog.dirty = false
+    local f = io.open(ensureConfigDir() .. '\\' .. CALL_LOG_NAME, 'wb')
+    if not f then return end
+    f:write(table.concat(callLog.lines, '\r\n'), '\r\n')
+    f:close()
+end
+
+-- Dialog and chat text come in CP1251, the log is UTF-8 like the page lines.
+local function utf(s) return u8(tostring(s or '')) end
+
 local function replyToDialog(id, button, item, input)
     dialogReply.armed = true
     dialogReply.at = os.clock() + DIALOG_REPLY_DELAY
@@ -575,18 +621,30 @@ end
 local function flushDialogReply()
     if not dialogReply.armed or os.clock() < dialogReply.at then return end
     dialogReply.armed = false
+    -- The onSendDialogResponse hook does not see answers sent from Lua, so ours is traced here.
+    trace(('answer (script) id=%s button=%s row=%s'):format(tostring(dialogReply.id), tostring(dialogReply.button), tostring(dialogReply.item)))
     sampSendDialogResponse(dialogReply.id, dialogReply.button, dialogReply.item, dialogReply.input)
 end
 
 -- The page's call message; a call already in progress wins.
 local function handleCall(body)
     if call then return end
-    if body == 'unknown' then
+    -- The trace is the last field; a bootstrap from 1.0.1 still alive in CEF sends none.
+    local head, pageTrace = body:match('^(unknown)|(.*)$')
+    if not head then head, pageTrace = body:match('^(%d+|%d+|%d+|[%d%-]+|[^|]*)|(.*)$') end
+    if not head then head, pageTrace = body, '' end
+    traceStart()
+    trace('page: ' .. head)
+    for line in (urlDecode(pageTrace) .. '\n'):gmatch('([^\n]*)\n') do
+        if line ~= '' then trace('  ' .. line) end
+    end
+    if head == 'unknown' then
+        trace('result: card not resolved')
         notify('Не удалось определить машину. Откройте /cars заново.')
         return
     end
-    local row, total, loaded, gameId, title = body:match('^(%d+)|(%d+)|(%d+)|([%d%-]+)|(.*)$')
-    if not row then return end
+    local row, total, loaded, gameId, title = head:match('^(%d+)|(%d+)|(%d+)|([%d%-]+)|(.*)$')
+    if not row then trace('result: bad page message') return end
     call = {
         row = tonumber(row), total = tonumber(total), loaded = tonumber(loaded),
         gameId = gameId ~= '-' and gameId or nil, title = urlDecode(title), stage = 'start',
@@ -602,15 +660,19 @@ local function stepCall()
         sampSendChat('/phone')
         sendCefEvent('launchedApp|29')
         sampSendChat('/phone')
+        trace('sent /phone, launchedApp|29, /phone')
         notify('Вызываю {FFB48A}' .. call.title .. '{FFFFFF}...')
     elseif os.clock() >= call.deadline then
         call = nil
+        trace('result: no «Мой транспорт» dialog in ' .. CALL_TIMEOUT .. ' s')
         notify('Телефон не открыл список машин. Попробуйте ещё раз.')
     end
 end
 
 -- Picks the row only when the dialog matches what the page counted; otherwise the player sees it as is.
 function sampev.onShowDialog(id, style, title, button1, button2, text)
+    trace(('dialog id=%s style=%s title=%s buttons=%s / %s'):format(tostring(id), tostring(style), utf(title), utf(button1), utf(button2)))
+    for line in (utf(text) .. '\n'):gmatch('([^\n]*)\n') do trace('  | ' .. line) end
     if not call or call.stage ~= 'wait' or style ~= 4 or not (title or ''):find(PCARS_TITLE, 1, true) then return end
     local c = call
     call = nil
@@ -630,11 +692,30 @@ function sampev.onShowDialog(id, style, title, button1, button2, text)
         ok = c.row >= c.loaded
     end
     if not ok then
+        trace(('result: mismatch - %d rows, expected %d with %d loaded, row %d, game id %s')
+            :format(#rows, c.total, c.loaded, c.row, tostring(c.gameId)))
         notify('Список в телефоне не совпал с «Мои Т/С» - выберите машину сами.')
         return
     end
+    trace(('result: picked row %d: %s'):format(c.row, utf(target)))
     replyToDialog(id, 1, c.row, '')
     return false
+end
+
+-- Who answered which dialog and what the server said, for the trace window only.
+function sampev.onSendDialogResponse(id, button, item, input)
+    trace(('answer id=%s button=%s item=%s input=%s'):format(tostring(id), tostring(button), tostring(item), utf(input)))
+end
+
+-- The server refuses a call in chat (green zone, in a car...): no dialog will come, its own line says why.
+local SERVER_ERROR = cp('[Ошибка]')
+
+function sampev.onServerMessage(color, text)
+    trace('chat: ' .. utf(text))
+    if call and call.stage == 'wait' and tostring(text or ''):find(SERVER_ERROR, 1, true) then
+        call = nil
+        trace('result: server refused')
+    end
 end
 
 -- Our page messages never reach the server; returns false for them.
@@ -810,6 +891,7 @@ function main()
     while true do
         flushDialogReply()
         stepCall()
+        flushTrace()
         if os.clock() >= nextInject then
             evalcef(bootJs())
             nextInject = os.clock() + 5
