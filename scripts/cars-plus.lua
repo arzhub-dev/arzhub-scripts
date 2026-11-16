@@ -1,6 +1,6 @@
 script_name('Cars Plus')
 script_author('ArzHub')
-script_version('1.0.3')
+script_version('1.1.0')
 script_url('https://arzhub.top/hub/cars-plus')
 
 -- Script page (current version, changelog): https://arzhub.top/hub/cars-plus
@@ -35,7 +35,8 @@ local configPath = 'ArzHub/cars-plus/config.ini'
 
 local config = inicfg.load({
     settings = {
-        sort = 'default' -- One of SORT_KEYS.
+        sort = 'default', -- One of SORT_KEYS.
+        fav = 'default' -- One of FAV_KEYS.
     }
 }, configPath)
 
@@ -62,6 +63,14 @@ local function sortKey()
     return SORT_KEYS[k] and k or 'default'
 end
 
+-- Order of the starred block. Keys are stored in the config, never rename them.
+local FAV_KEYS = { default = true, last = true, first = true }
+
+local function favKey()
+    local k = config.settings.fav
+    return FAV_KEYS[k] and k or 'default'
+end
+
 -- ============================================================================
 -- CEF: search and sort in the «Мои Т/С» window
 -- ============================================================================
@@ -72,11 +81,13 @@ local BOOT_TEMPLATE = [==[
 (() => {
     const VERSION = '__VERSION__';
     const SAVED_SORT = '__SORT__';
+    const SAVED_FAV = '__FAV__';
     const BAR_ID = 'ah-cars-plus-bar';
     const STYLE_ID = 'ah-cars-plus-style';
     const LIST_SEL = '.vehicle-menu-list';
     const HIDE = 'ah-hide';
     const FLEX = 'ah-flex';
+    const SEP = 'ah-sep';
     const CALL = 'ah-call';
 
     const prev = window.__ahCarsPlus;
@@ -99,6 +110,7 @@ local BOOT_TEMPLATE = [==[
         vNew: '\u0441\u043d\u0430\u0447\u0430\u043b\u0430 \u043d\u043e\u0432\u044b\u0435', // сначала новые
         vOld: '\u0441\u043d\u0430\u0447\u0430\u043b\u0430 \u0441\u0442\u0430\u0440\u044b\u0435', // сначала старые
         vRating: '\u0441\u043d\u0430\u0447\u0430\u043b\u0430 \u043b\u0443\u0447\u0448\u0438\u0435', // сначала лучшие
+        hFav: '\u0418\u0437\u0431\u0440\u0430\u043d\u043d\u044b\u0435:', // Избранные:
         call: '\u0412\u044b\u0437\u0432\u0430\u0442\u044c', // Вызвать
         nativeCall: '\u0412\u044b\u0437\u0432\u0430\u0442\u044c \u0437\u0430', // Вызвать за
     };
@@ -112,11 +124,19 @@ local BOOT_TEMPLATE = [==[
         { k: 'rating', t: T.hRating, s: T.vRating },
     ];
 
-    const state = { q: '', sort: 'default', open: false, byId: new Map(), seq: 0 };
+    // Order inside the starred block, by the server's star counter: a new star always gets the next number.
+    const FAV_MODES = [
+        { k: 'default', t: T.hFav, s: T.vDefault },
+        { k: 'last', t: T.hFav, s: T.vNew },
+        { k: 'first', t: T.hFav, s: T.vOld },
+    ];
+
+    const state = { q: '', sort: 'default', fav: 'default', open: false, byId: new Map(), seq: 0 };
     if (MODES.some((m) => m.k === SAVED_SORT)) state.sort = SAVED_SORT;
+    if (FAV_MODES.some((m) => m.k === SAVED_FAV)) state.fav = SAVED_FAV;
     // The choice is kept in the script's config: the page reports it to Lua.
-    const save = () => {
-        try { window.cef.SendMessage('__PREFIX__sort|' + state.sort, 0); } catch (e) {}
+    const save = (what, k) => {
+        try { window.cef.SendMessage('__PREFIX__' + what + '|' + k, 0); } catch (e) {}
     };
 
     // Same fluid size formula Arizona's CSS uses.
@@ -297,7 +317,20 @@ local BOOT_TEMPLATE = [==[
         old: (a, b) => nullLast(a.id, b.id, 1),
         rating: (a, b) => nullLast(a.place, b.place, 1) || nullLast(a.score, b.score, -1),
     };
-    const sortCards = (cards) => cards.slice().sort((a, b) => (b.fav - a.fav) || COMPARE[state.sort](a, b) || cmpName(a, b));
+    // A star in the DOM without a number yet is the one just set, so it counts as the newest.
+    const favNum = (c) => {
+        const v = c.id == null ? null : state.byId.get(c.id);
+        return v && v.favorite > 0 ? v.favorite : Infinity;
+    };
+    const cmpFav = (a, b) => {
+        if (state.fav === 'default' || !a.fav || !b.fav) return 0;
+        const x = favNum(a), y = favNum(b);
+        if (x === y) return 0;
+        return (state.fav === 'last' ? x < y : x > y) ? 1 : -1;
+    };
+    // Under «by default» the rest keeps Arizona's order, which is the DOM order.
+    const sortCards = (cards) => cards.map((c, i) => Object.assign(c, { pos: i })).sort((a, b) => (b.fav - a.fav) || cmpFav(a, b)
+        || (state.sort === 'default' ? a.pos - b.pos : COMPARE[state.sort](a, b) || cmpName(a, b)));
 
     const apply = (cards) => {
         const q = norm(state.q);
@@ -307,7 +340,7 @@ local BOOT_TEMPLATE = [==[
             toggle(c.it, HIDE, hide);
             if (!hide) shown++;
         });
-        if (state.sort === 'default') {
+        if (state.sort === 'default' && state.fav === 'default') {
             cards.forEach((c) => { if (c.it.style.order) c.it.style.removeProperty('order'); });
         } else {
             sortCards(cards).forEach((c, i) => { const o = String(i + 1); if (c.it.style.order !== o) c.it.style.order = o; });
@@ -336,6 +369,7 @@ local BOOT_TEMPLATE = [==[
             '#' + BAR_ID + ' .' + R + '-filter{margin-left:' + gs(10) + ';flex-shrink:0}',
             '#' + BAR_ID + ' .' + R + '-filter-dropdown-item-title{width:' + gs(90) + '}',
             '#' + BAR_ID + ' .' + R + '-filter-dropdown{width:' + gs(342) + '}',
+            '#' + BAR_ID + ' .' + SEP + '{height:1px;margin:0;background:rgba(0,0,0,.1)}',
             '#' + BAR_ID + ' .' + R + '-input-field{padding-right:' + gs(48) + '}',
             // Native focus ring is solid white; with a single field the caret is enough.
             '#' + BAR_ID + ' .' + R + '-input-field:focus{outline:none;box-shadow:none}',
@@ -370,20 +404,14 @@ local BOOT_TEMPLATE = [==[
         msg += '|' + encodeURIComponent(trace);
         try { window.cef.SendMessage('__PREFIX__call|' + msg, 0); } catch (e) {}
     };
-    // Arizona's own «Вызвать за ...» plate marks a car that cannot be called: it is hidden and gets no chip.
+    // A card with Arizona's own «Вызвать за ...» plate gets no chip, so a card never offers two calls.
     // Rechecked on every kick, since Svelte reuses label nodes by position.
     const syncCall = (it) => {
         const labels = it.querySelector('.vehicle-menu-vehicle-item__labels');
         if (!labels) return;
         const nativeCall = norm(T.nativeCall);
-        let native = false;
-        [...labels.children].forEach((l) => {
-            if (l.classList.contains(CALL)) return;
-            const v = l.querySelector('.vehicle-menu-vehicle-item__label-value');
-            const isNative = !!v && norm(v.textContent).indexOf(nativeCall) === 0;
-            toggle(l, HIDE, isNative);
-            if (isNative) native = true;
-        });
+        const native = [...labels.querySelectorAll('.vehicle-menu-vehicle-item__label-value')]
+            .some((v) => norm(v.textContent).indexOf(nativeCall) === 0);
         const old = labels.querySelector('.' + CALL);
         if (native) { if (old) old.remove(); return; }
         if (old) return;
@@ -397,7 +425,14 @@ local BOOT_TEMPLATE = [==[
         const changed = k !== state.sort;
         state.sort = k;
         state.open = false;
-        if (changed) save();
+        if (changed) save('sort', k);
+        kick();
+    };
+    const setFav = (k) => {
+        const changed = k !== state.fav;
+        state.fav = k;
+        state.open = false;
+        if (changed) save('fav', k);
         kick();
     };
 
@@ -442,12 +477,18 @@ local BOOT_TEMPLATE = [==[
         empty.append(emptyIco, el('div', E + '-text', T.emptyTitle), el('div', E + '-caption', T.emptyCaption));
         bar.append(row, empty);
 
-        const items = MODES.map((m) => {
+        const item = (m, on, set) => {
             const it = el('div', R + '-filter-dropdown-item');
             it.append(el('p', R + '-filter-dropdown-item-title', m.t), el('p', R + '-filter-dropdown-item-subTitle', m.s), el('div', R + '-filter-dropdown-item-radio'));
-            it.addEventListener('click', (e) => { e.stopPropagation(); setSort(m.k); });
-            return { m, it };
-        });
+            it.addEventListener('click', (e) => { e.stopPropagation(); set(m.k); });
+            return { it, on: () => on() === m.k };
+        };
+        const items = MODES.map((m) => item(m, () => state.sort, setSort));
+        const favItems = FAV_MODES.map((m) => item(m, () => state.fav, setFav));
+        const sep = el('div', SEP);
+        sep.addEventListener('click', (e) => e.stopPropagation());
+        const rows = items.map((x) => x.it).concat(sep, favItems.map((x) => x.it));
+        const radios = items.concat(favItems);
 
         ui = {
             bar,
@@ -455,16 +496,16 @@ local BOOT_TEMPLATE = [==[
                 clear.style.display = state.q ? '' : 'none';
                 if (input.value !== state.q && document.activeElement !== input) input.value = state.q;
                 empty.style.display = state.q && !shown ? '' : 'none';
-                toggle(filter, R + '-filter--active', state.open || state.sort !== 'default');
+                toggle(filter, R + '-filter--active', state.open || state.sort !== 'default' || state.fav !== 'default');
                 if (state.open && !menu) {
                     menu = el('div', R + '-filter-dropdown');
-                    items.forEach((x) => menu.appendChild(x.it));
+                    rows.forEach((x) => menu.appendChild(x));
                     filter.appendChild(menu);
                 } else if (!state.open && menu) {
                     menu.remove();
                     menu = null;
                 }
-                items.forEach((x) => toggle(x.it, R + '-filter-dropdown-item--active', x.m.k === state.sort));
+                radios.forEach((x) => toggle(x.it, R + '-filter-dropdown-item--active', x.on()));
             },
         };
         return bar;
@@ -538,6 +579,7 @@ local function bootJs()
     local js = BOOT_TEMPLATE:gsub('__VERSION__', thisScript().version)
     js = js:gsub('__PREFIX__', MSG_PREFIX)
     js = js:gsub('__SORT__', sortKey())
+    js = js:gsub('__FAV__', favKey())
     return js
 end
 
@@ -734,6 +776,11 @@ local function handleOutgoing(str)
     local key = body:match('^sort|([%w_]+)$')
     if key and SORT_KEYS[key] and key ~= config.settings.sort then
         config.settings.sort = key
+        saveConfig()
+    end
+    local fav = body:match('^fav|([%w_]+)$')
+    if fav and FAV_KEYS[fav] and fav ~= config.settings.fav then
+        config.settings.fav = fav
         saveConfig()
     end
     return false
