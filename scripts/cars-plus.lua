@@ -1,6 +1,6 @@
 script_name('Cars Plus')
 script_author('ArzHub')
-script_version('1.1.0')
+script_version('1.2.0')
 script_url('https://arzhub.top/hub/cars-plus')
 
 -- Script page (current version, changelog): https://arzhub.top/hub/cars-plus
@@ -35,8 +35,9 @@ local configPath = 'ArzHub/cars-plus/config.ini'
 
 local config = inicfg.load({
     settings = {
-        sort = 'default', -- One of SORT_KEYS.
-        fav = 'default' -- One of FAV_KEYS.
+        sort = 'default', -- Key of MODES in the page.
+        fav = 'default', -- Key of FAV_MODES in the page.
+        view = 'default' -- Key of VIEWS in the page.
     }
 }, configPath)
 
@@ -55,20 +56,21 @@ local function saveConfig()
     inicfg.save(config, configPath)
 end
 
--- Keys are stored in the config, never rename them.
-local SORT_KEYS = { default = true, name = true, name_desc = true, new = true, old = true, rating = true }
+-- Saved choices: sort order, order of the starred block, card density of the list.
+-- The page owns the valid keys and falls back to default on an unknown one; Lua only keeps a key
+-- that is safe inside a JS string literal.
+local OPTS = { 'sort', 'fav', 'view' }
 
-local function sortKey()
-    local k = config.settings.sort
-    return SORT_KEYS[k] and k or 'default'
+local function isOpt(name)
+    for _, v in ipairs(OPTS) do
+        if v == name then return true end
+    end
+    return false
 end
 
--- Order of the starred block. Keys are stored in the config, never rename them.
-local FAV_KEYS = { default = true, last = true, first = true }
-
-local function favKey()
-    local k = config.settings.fav
-    return FAV_KEYS[k] and k or 'default'
+local function optKey(name)
+    local k = tostring(config.settings[name] or '')
+    return k:match('^[%w_]+$') and k or 'default'
 end
 
 -- ============================================================================
@@ -82,13 +84,18 @@ local BOOT_TEMPLATE = [==[
     const VERSION = '__VERSION__';
     const SAVED_SORT = '__SORT__';
     const SAVED_FAV = '__FAV__';
+    const SAVED_VIEW = '__VIEW__';
     const BAR_ID = 'ah-cars-plus-bar';
     const STYLE_ID = 'ah-cars-plus-style';
     const LIST_SEL = '.vehicle-menu-list';
     const HIDE = 'ah-hide';
     const FLEX = 'ah-flex';
     const SEP = 'ah-sep';
+    const VIEW_BTN = 'ah-view';
+    const SCORE = 'ah-score';
+    const FUEL = 'ah-fuel';
     const CALL = 'ah-call';
+    const VIEW_CLS = { reduced: 'ah-view-reduced', compact: 'ah-view-compact' };
 
     const prev = window.__ahCarsPlus;
     if (prev) {
@@ -111,6 +118,9 @@ local BOOT_TEMPLATE = [==[
         vOld: '\u0441\u043d\u0430\u0447\u0430\u043b\u0430 \u0441\u0442\u0430\u0440\u044b\u0435', // сначала старые
         vRating: '\u0441\u043d\u0430\u0447\u0430\u043b\u0430 \u043b\u0443\u0447\u0448\u0438\u0435', // сначала лучшие
         hFav: '\u0418\u0437\u0431\u0440\u0430\u043d\u043d\u044b\u0435:', // Избранные:
+        viewDefault: '\u0412\u0438\u0434: \u043e\u0431\u044b\u0447\u043d\u044b\u0439', // Вид: обычный
+        viewReduced: '\u0412\u0438\u0434: \u0443\u043c\u0435\u043d\u044c\u0448\u0435\u043d\u043d\u044b\u0439', // Вид: уменьшенный
+        viewCompact: '\u0412\u0438\u0434: \u043a\u043e\u043c\u043f\u0430\u043a\u0442\u043d\u044b\u0439', // Вид: компактный
         call: '\u0412\u044b\u0437\u0432\u0430\u0442\u044c', // Вызвать
         nativeCall: '\u0412\u044b\u0437\u0432\u0430\u0442\u044c \u0437\u0430', // Вызвать за
     };
@@ -131,9 +141,17 @@ local BOOT_TEMPLATE = [==[
         { k: 'first', t: T.hFav, s: T.vOld },
     ];
 
-    const state = { q: '', sort: 'default', fav: 'default', open: false, byId: new Map(), seq: 0 };
-    if (MODES.some((m) => m.k === SAVED_SORT)) state.sort = SAVED_SORT;
-    if (FAV_MODES.some((m) => m.k === SAVED_FAV)) state.fav = SAVED_FAV;
+    // Card density, switched in a circle by the button next to the filter.
+    const VIEWS = [
+        { k: 'default', t: T.viewDefault },
+        { k: 'reduced', t: T.viewReduced },
+        { k: 'compact', t: T.viewCompact },
+    ];
+
+    const state = { q: '', sort: 'default', fav: 'default', view: 'default', open: false, byId: new Map(), seq: 0 };
+    // Saved choices from the config; an unknown key keeps the default.
+    [['sort', MODES, SAVED_SORT], ['fav', FAV_MODES, SAVED_FAV], ['view', VIEWS, SAVED_VIEW]]
+        .forEach(([f, list, k]) => { if (list.some((m) => m.k === k)) state[f] = k; });
     // The choice is kept in the script's config: the page reports it to Lua.
     const save = (what, k) => {
         try { window.cef.SendMessage('__PREFIX__' + what + '|' + k, 0); } catch (e) {}
@@ -159,6 +177,7 @@ local BOOT_TEMPLATE = [==[
 
     // Case-insensitive, yo equals ye, runs of spaces collapse.
     const norm = (s) => String(s || '').toLowerCase().replace(/\u0451/g, '\u0435').replace(/\s+/g, ' ').trim();
+    const NATIVE_CALL = norm(T.nativeCall);
     const ownText = (e) => {
         let s = '';
         e.childNodes.forEach((n) => { if (n.nodeType === 3) s += n.textContent; });
@@ -227,7 +246,7 @@ local BOOT_TEMPLATE = [==[
             fav: !!card.querySelector('.vehicle-menu-vehicle-item__favorite--active'),
             score: sm ? parseInt(sm[1], 10) : null,
             place: place ? num(place.textContent) : null,
-            id: null,
+            rar,
         };
     };
     const keyOf = (title, score) => norm(title) + '|' + (score == null ? '' : score);
@@ -251,11 +270,11 @@ local BOOT_TEMPLATE = [==[
     // Cards follow Arizona's order in the DOM, so a full match by position is exact; otherwise twins stay unsure.
     const attachIds = (cards) => {
         cards.forEach((c) => { c.id = null; c.sure = false; });
-        if (!state.byId.size) return 0;
+        if (!state.byId.size) return;
         const seq = arizonaOrder();
         if (seq.length === cards.length && cards.every((c, i) => keyOf(c.title, c.score) === keyOfData(seq[i]))) {
             cards.forEach((c, i) => { c.id = seq[i].id; c.sure = true; });
-            return cards.length;
+            return;
         }
         const pool = new Map();
         seq.slice().sort((a, b) => a.id - b.id).forEach((v) => {
@@ -265,25 +284,24 @@ local BOOT_TEMPLATE = [==[
         });
         const twins = new Map();
         cards.forEach((c) => { const k = keyOf(c.title, c.score); twins.set(k, (twins.get(k) || 0) + 1); });
-        let n = 0;
         cards.forEach((c) => {
             const k = keyOf(c.title, c.score);
             const arr = pool.get(k);
             const sure = !!arr && arr.length === 1 && twins.get(k) === 1;
             const v = arr && arr.shift();
-            if (v) { c.id = v.id; c.sure = sure; n++; }
+            if (v) { c.id = v.id; c.sure = sure; }
         });
-        return n;
     };
     // Order of the phone's «Мой транспорт»: cars out in the world (a game id plate) by id, then the rest by id.
     // Not by status: besides loaded/notLoaded there are garages, impound, rent, stolen..., all listed by id below.
+    // Cars rented from a dealer come with a negative id and are not in the phone list at all.
     const gameIdOf = (v) => {
         const l = (v.labels || []).find((x) => x && x.icon === 'icon-id');
         return l && /^\d+$/.test(String(l.title)) ? String(l.title) : null;
     };
     const isLoaded = (v) => gameIdOf(v) !== null;
     const phoneOrder = () => {
-        const all = [...state.byId.values()];
+        const all = [...state.byId.values()].filter((v) => v.id >= 0);
         const byId = (a, b) => a.id - b.id;
         return all.filter(isLoaded).sort(byId).concat(all.filter((v) => !isLoaded(v)).sort(byId));
     };
@@ -310,11 +328,13 @@ local BOOT_TEMPLATE = [==[
     //region SORT & FILTER - order via CSS `order`, never move Svelte's nodes
     const cmpName = (a, b) => a.title.localeCompare(b.title, 'ru', { sensitivity: 'base', numeric: true });
     const nullLast = (x, y, dir) => ((x == null) - (y == null)) || (x == null ? 0 : dir * (x - y));
+    // Owned cars come in id order; a rented car (negative id) is the latest one taken.
+    const added = (c) => c.id != null && c.id < 0 ? Infinity : c.id;
     const COMPARE = {
         name: cmpName,
         name_desc: (a, b) => cmpName(b, a),
-        new: (a, b) => nullLast(a.id, b.id, -1),
-        old: (a, b) => nullLast(a.id, b.id, 1),
+        new: (a, b) => nullLast(added(a), added(b), -1),
+        old: (a, b) => nullLast(added(a), added(b), 1),
         rating: (a, b) => nullLast(a.place, b.place, 1) || nullLast(a.score, b.score, -1),
     };
     // A star in the DOM without a number yet is the one just set, so it counts as the newest.
@@ -353,6 +373,7 @@ local BOOT_TEMPLATE = [==[
     const R = 'transport-interaction-rating__sort';
     const E = 'transport-interaction-rating__side-left-empty';
     const EMPTY_ICON = './assets/b003bba07054c8272b10.webp';
+    const VR = '.' + VIEW_CLS.reduced, VC = '.' + VIEW_CLS.compact, CI = ' .vehicle-menu-vehicle-item';
     const ensureStyle = () => {
         if (document.getElementById(STYLE_ID)) return;
         const st = el('style');
@@ -361,16 +382,15 @@ local BOOT_TEMPLATE = [==[
             '.' + FLEX + '{display:flex!important;flex-direction:column}',
             '.' + FLEX + '>*{flex-shrink:0}',
             '.' + HIDE + '{display:none!important}',
-            '#' + BAR_ID + '{position:relative;z-index:3;order:-1;display:flex;flex-direction:column;gap:' + gs(10) + ';margin-bottom:' + gs(25) + '}',
+            '#' + BAR_ID + '{position:relative;z-index:4;order:-1;display:flex;flex-direction:column;gap:' + gs(10) + ';margin-bottom:' + gs(25) + '}',
             // The rating window sizes these for its full-screen layout; here the field stretches up to the filter button.
             '#' + BAR_ID + ' .' + R + '{margin-top:0}',
             '#' + BAR_ID + ' .' + R + '-input{flex:1 1 auto;margin-left:0}',
-            '#' + BAR_ID + ' .' + R + '-input-field{width:100%}',
+            '#' + BAR_ID + ' .' + R + '-input-field{width:100%;padding-right:' + gs(48) + '}',
             '#' + BAR_ID + ' .' + R + '-filter{margin-left:' + gs(10) + ';flex-shrink:0}',
             '#' + BAR_ID + ' .' + R + '-filter-dropdown-item-title{width:' + gs(90) + '}',
             '#' + BAR_ID + ' .' + R + '-filter-dropdown{width:' + gs(342) + '}',
             '#' + BAR_ID + ' .' + SEP + '{height:1px;margin:0;background:rgba(0,0,0,.1)}',
-            '#' + BAR_ID + ' .' + R + '-input-field{padding-right:' + gs(48) + '}',
             // Native focus ring is solid white; with a single field the caret is enough.
             '#' + BAR_ID + ' .' + R + '-input-field:focus{outline:none;box-shadow:none}',
             '#' + BAR_ID + ' .ah-clear{position:absolute;right:0;top:50%;transform:translateY(-50%);z-index:1;min-height:' + gs(44) + ';cursor:pointer}',
@@ -380,6 +400,35 @@ local BOOT_TEMPLATE = [==[
             '#' + BAR_ID + ' .' + E + '-icon{height:' + gs(34) + '}',
             '#' + BAR_ID + ' .' + E + '-icon-wrapper i{font-size:' + gs(30) + ';color:hsla(0,0%,100%,.6)}',
             '#' + BAR_ID + ' .' + E + '-text{font-size:' + gs(20) + '}',
+            // Views: reduced keeps two rows and moves the rarity bar up as a chip; compact is one row without the picture.
+            VR + ' .vehicle-menu-list__item{margin-bottom:' + gs(10) + '}',
+            VR + CI + '{height:auto;justify-content:flex-start;gap:' + gs(10) + ';padding:' + gs(12) + ' ' + gs(12) + ' ' + gs(12) + ' ' + gs(15) + '}',
+            VR + CI + '__image-wrapper{width:' + gs(105) + ';top:auto;bottom:' + gs(4) + ';right:' + gs(10) + ';transform:none}',
+            VR + CI + '__title{font-size:' + gs(22) + '}',
+            VR + CI + '__title-row{align-items:center;max-width:calc(100% - ' + gs(180) + ')}',
+            VR + CI + '__favorite{margin-top:0}',
+            VR + CI + '__status{height:' + gs(26) + '}',
+            VR + CI + '__labels{margin-top:0;flex-wrap:wrap;max-width:calc(100% - ' + gs(130) + ')}',
+            VR + CI + '__label{height:' + gs(34) + ';padding:' + gs(10) + ' ' + gs(12) + '}',
+            VR + CI + '__item-rarity{left:auto;right:' + gs(12) + ';top:' + gs(12) + ';bottom:auto;width:auto;height:' + gs(24) + ';padding:0 ' + gs(10) + ';border-radius:' + gs(12) + ';z-index:3}',
+            VR + CI + '__item-rarity-placement{display:none}',
+            VC + ' .vehicle-menu-list__item{margin-bottom:' + gs(6) + '}',
+            VC + CI + '{height:' + gs(52) + ';flex-direction:row;align-items:center;justify-content:flex-start;gap:' + gs(10) + ';padding:0 ' + gs(12) + ' 0 ' + gs(18) + ';overflow:hidden}',
+            VC + CI + '__image-wrapper{display:none}',
+            VC + CI + '__title-row{flex:1 1 0;min-width:' + gs(150) + ';align-items:center}',
+            VC + CI + '__title{font-size:' + gs(18) + ';max-width:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;word-break:normal}',
+            VC + CI + '__favorite{margin-top:0;min-width:' + gs(26) + ';min-height:' + gs(26) + '}',
+            VC + CI + '__status{height:' + gs(22) + ';padding:' + gs(4) + '}',
+            VC + CI + '__status-name{display:none}',
+            VC + CI + '__labels{margin-top:0;flex:0 1 auto;min-width:0;overflow:hidden;gap:' + gs(6) + '}',
+            VC + CI + '__label-value{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+            VC + ' .' + CALL + '{flex-shrink:0}',
+            VC + CI + '__label{min-width:0;height:' + gs(30) + ';padding:' + gs(8) + ' ' + gs(10) + ';font-size:' + gs(13) + '}',
+            VC + ' .' + FUEL + '{display:none}',
+            VC + CI + '__item-rarity{left:0;top:0;bottom:0;right:auto;width:' + gs(5) + ';height:auto;border-radius:' + gs(5) + ' 0 0 ' + gs(5) + '}',
+            VC + CI + '__item-rarity>*{display:none}',
+            VC + ' .' + SCORE + '{flex-shrink:0;display:flex;align-items:center;justify-content:center;box-sizing:border-box;min-width:' + gs(56) + ';height:' + gs(30) + ';padding:0 ' + gs(10) + ';border-radius:' + gs(15) + ';color:hsla(0,0%,7%,.8);font-family:HeadingNowMedium;font-size:' + gs(14) + '}',
+            VC + ' .' + SCORE + '--none{background:none!important;color:hsla(0,0%,100%,.4)}',
             '.vehicle-menu-vehicle-item__label.' + CALL + '{cursor:pointer}',
             '.vehicle-menu-vehicle-item__label.' + CALL + ':hover{background-color:hsla(0,0%,100%,.2)}',
         ].join('\n');
@@ -404,36 +453,49 @@ local BOOT_TEMPLATE = [==[
         msg += '|' + encodeURIComponent(trace);
         try { window.cef.SendMessage('__PREFIX__call|' + msg, 0); } catch (e) {}
     };
-    // A card with Arizona's own «Вызвать за ...» plate gets no chip, so a card never offers two calls.
-    // Rechecked on every kick, since Svelte reuses label nodes by position.
-    const syncCall = (it) => {
-        const labels = it.querySelector('.vehicle-menu-vehicle-item__labels');
-        if (!labels) return;
-        const nativeCall = norm(T.nativeCall);
-        const native = [...labels.querySelectorAll('.vehicle-menu-vehicle-item__label-value')]
-            .some((v) => norm(v.textContent).indexOf(nativeCall) === 0);
-        const old = labels.querySelector('.' + CALL);
-        if (native) { if (old) old.remove(); return; }
-        if (old) return;
-        const chip = el('div', 'vehicle-menu-vehicle-item__label ' + CALL);
-        chip.append(el('i', 'vehicle-menu-vehicle-item__label-icon icon-gps'), el('div', 'vehicle-menu-vehicle-item__label-value', T.call));
-        chip.addEventListener('click', (e) => { e.stopPropagation(); callFor(it); });
-        labels.appendChild(chip);
+    // Our own nodes and marks on a card, rechecked on every kick: Svelte reuses cards and label nodes by position.
+    // A card with Arizona's «Вызвать за ...» plate or a rented car (negative id, not in the phone) gets no «Вызвать».
+    // Compact view only: the score pill and a mark on the fuel plate, so CSS can hide it.
+    const syncCard = (c) => {
+        const card = c.it.querySelector('.vehicle-menu-vehicle-item');
+        if (!card) return;
+        const labels = card.querySelector('.vehicle-menu-vehicle-item__labels');
+        if (labels) {
+            const values = [...labels.querySelectorAll('.vehicle-menu-vehicle-item__label-value')];
+            const native = values.some((v) => norm(v.textContent).indexOf(NATIVE_CALL) === 0);
+            const old = labels.querySelector('.' + CALL);
+            if (native || (c.id != null && c.id < 0)) { if (old) old.remove(); }
+            else if (!old) {
+                const chip = el('div', 'vehicle-menu-vehicle-item__label ' + CALL);
+                chip.append(el('i', 'vehicle-menu-vehicle-item__label-icon icon-gps'), el('div', 'vehicle-menu-vehicle-item__label-value', T.call));
+                chip.addEventListener('click', (e) => { e.stopPropagation(); callFor(c.it); });
+                labels.appendChild(chip);
+            }
+        }
+        const on = state.view === 'compact';
+        card.querySelectorAll('.vehicle-menu-vehicle-item__label').forEach((l) => {
+            toggle(l, FUEL, on && !!l.querySelector('.icon-fuel'));
+        });
+        let sc = card.querySelector('.' + SCORE);
+        if (!on) { if (sc) sc.remove(); return; }
+        if (!sc) { sc = el('div', SCORE); card.appendChild(sc); }
+        setText(sc, c.score == null ? '-' : String(c.score));
+        // The pill takes the rarity colour from Arizona's own bar; unrated cars get a bare dash.
+        const bg = c.score != null && c.rar.parentNode ? c.rar.parentNode.style.background || '' : '';
+        if (sc.style.background !== bg) sc.style.background = bg;
+        toggle(sc, SCORE + '--none', c.score == null);
     };
 
-    const setSort = (k) => {
-        const changed = k !== state.sort;
-        state.sort = k;
+    const setOpt = (f, k) => {
+        const changed = k !== state[f];
+        state[f] = k;
         state.open = false;
-        if (changed) save('sort', k);
+        if (changed) save(f, k);
         kick();
     };
-    const setFav = (k) => {
-        const changed = k !== state.fav;
-        state.fav = k;
-        state.open = false;
-        if (changed) save('fav', k);
-        kick();
+    const nextView = () => {
+        const i = VIEWS.findIndex((m) => m.k === state.view);
+        setOpt('view', VIEWS[(i + 1) % VIEWS.length].k);
     };
 
     const buildBar = () => {
@@ -465,7 +527,11 @@ local BOOT_TEMPLATE = [==[
         filter.addEventListener('click', (e) => { e.stopPropagation(); state.open = !state.open; kick(); });
         let menu = null;
 
-        row.append(box, filter);
+        const viewBtn = el('div', R + '-filter ' + VIEW_BTN);
+        viewBtn.appendChild(el('i', R + '-filter-icon icon-menu-burger'));
+        viewBtn.addEventListener('click', (e) => { e.stopPropagation(); nextView(); });
+
+        row.append(box, filter, viewBtn);
         const empty = el('div', E);
         const emptyIco = el('div', E + '-icon-wrapper');
         const emptyImg = el('img', E + '-icon');
@@ -483,8 +549,8 @@ local BOOT_TEMPLATE = [==[
             it.addEventListener('click', (e) => { e.stopPropagation(); set(m.k); });
             return { it, on: () => on() === m.k };
         };
-        const items = MODES.map((m) => item(m, () => state.sort, setSort));
-        const favItems = FAV_MODES.map((m) => item(m, () => state.fav, setFav));
+        const items = MODES.map((m) => item(m, () => state.sort, (k) => setOpt('sort', k)));
+        const favItems = FAV_MODES.map((m) => item(m, () => state.fav, (k) => setOpt('fav', k)));
         const sep = el('div', SEP);
         sep.addEventListener('click', (e) => e.stopPropagation());
         const rows = items.map((x) => x.it).concat(sep, favItems.map((x) => x.it));
@@ -497,6 +563,9 @@ local BOOT_TEMPLATE = [==[
                 if (input.value !== state.q && document.activeElement !== input) input.value = state.q;
                 empty.style.display = state.q && !shown ? '' : 'none';
                 toggle(filter, R + '-filter--active', state.open || state.sort !== 'default' || state.fav !== 'default');
+                toggle(viewBtn, R + '-filter--active', state.view !== 'default');
+                const vt = VIEWS.find((m) => m.k === state.view).t;
+                if (viewBtn.title !== vt) viewBtn.title = vt;
                 if (state.open && !menu) {
                     menu = el('div', R + '-filter-dropdown');
                     rows.forEach((x) => menu.appendChild(x));
@@ -536,8 +605,9 @@ local BOOT_TEMPLATE = [==[
             list.insertBefore(bar, list.firstChild);
         }
         cards = readCards(list);
-        cards.forEach((c) => syncCall(c.it));
+        Object.keys(VIEW_CLS).forEach((v) => toggle(list, VIEW_CLS[v], state.view === v));
         attachIds(cards);
+        cards.forEach(syncCard);
         ui.render(apply(cards));
     };
 
@@ -564,6 +634,9 @@ local BOOT_TEMPLATE = [==[
         if (st) st.remove();
         document.querySelectorAll('.' + FLEX).forEach((x) => x.classList.remove(FLEX));
         document.querySelectorAll('.' + CALL).forEach((x) => x.remove());
+        document.querySelectorAll('.' + SCORE).forEach((x) => x.remove());
+        document.querySelectorAll('.' + FUEL).forEach((x) => x.classList.remove(FUEL));
+        Object.values(VIEW_CLS).forEach((v) => document.querySelectorAll('.' + v).forEach((x) => x.classList.remove(v)));
         document.querySelectorAll('.' + HIDE).forEach((x) => x.classList.remove(HIDE));
         document.querySelectorAll('.vehicle-menu-list__item').forEach((x) => x.style.removeProperty('order'));
         window.__ahCarsPlus = null;
@@ -578,8 +651,11 @@ local BOOT_TEMPLATE = [==[
 local function bootJs()
     local js = BOOT_TEMPLATE:gsub('__VERSION__', thisScript().version)
     js = js:gsub('__PREFIX__', MSG_PREFIX)
-    js = js:gsub('__SORT__', sortKey())
-    js = js:gsub('__FAV__', favKey())
+    for _, name in ipairs(OPTS) do
+        js = js:gsub('__' .. name:upper() .. '__', optKey(name))
+    end
+    -- Whole-line comments and indentation do not reach the page: evalcef is capped at 32767 bytes.
+    js = js:gsub('\n[ \t]*//[^\n]*', ''):gsub('\n[ \t]+', '\n')
     return js
 end
 
@@ -674,9 +750,8 @@ end
 -- The page's call message; a call already in progress wins.
 local function handleCall(body)
     if call then return end
-    -- The trace is the last field; a bootstrap from 1.0.1 still alive in CEF sends none.
-    local head, pageTrace = body:match('^(unknown)|(.*)$')
-    if not head then head, pageTrace = body:match('^(%d+|%d+|%d+|[%d%-]+|[^|]*)|(.*)$') end
+    -- The page's trace is the last field; title and trace are URI-encoded, so neither holds a '|'.
+    local head, pageTrace = body:match('^(.*)|([^|]*)$')
     if not head then head, pageTrace = body, '' end
     traceStart()
     trace('page: ' .. head)
@@ -773,14 +848,9 @@ local function handleOutgoing(str)
         handleCall(callBody)
         return false
     end
-    local key = body:match('^sort|([%w_]+)$')
-    if key and SORT_KEYS[key] and key ~= config.settings.sort then
-        config.settings.sort = key
-        saveConfig()
-    end
-    local fav = body:match('^fav|([%w_]+)$')
-    if fav and FAV_KEYS[fav] and fav ~= config.settings.fav then
-        config.settings.fav = fav
+    local name, k = body:match('^(%l+)|([%w_]+)$')
+    if name and isOpt(name) and k ~= tostring(config.settings[name]) then
+        config.settings[name] = k
         saveConfig()
     end
     return false
