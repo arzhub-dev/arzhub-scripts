@@ -557,7 +557,7 @@
       "id": "arzhub",
       "name": "ArzHub",
       "filename": "ArzHub.lua",
-      "version": "1.0.7",
+      "version": "1.0.8",
       "path": "scripts/arzhub.lua",
       "actual": true,
       "changelog": [
@@ -732,6 +732,13 @@
           "date": "2026-11-15",
           "notes": [
             "Мелкие исправления и доработки."
+          ]
+        },
+        {
+          "version": "1.0.8",
+          "date": "2026-11-16",
+          "notes": [
+            "На телефоне (MonetLoader) менеджер сразу сообщает, что пока работает только на ПК-версии игры."
           ]
         }
       ],

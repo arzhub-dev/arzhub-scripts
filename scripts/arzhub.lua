@@ -1,6 +1,6 @@
 script_name('ArzHub')
 script_author('ArzHub')
-script_version('1.0.7')
+script_version('1.0.8')
 script_url('https://arzhub.top/hub')
 
 -- In-game manager for the ArzHub scripts: what is installed, what is out, install, update and remove in one click.
@@ -66,6 +66,8 @@ local LEGACY_STATE = {
 -- What the player reads, in chat and in the window.
 local TEXT = {
     loadFirst = 'Загружен {FFB48A}v%s{FFFFFF}',
+    -- MonetLoader (Android): there is no Arizona CEF window for the manager.
+    mobileOnly = 'ArzHub пока работает только на ПК-версии игры. Следите за новостями на сайте: {FFB48A}https://arzhub.top/hub',
     loadUpdated = 'Обновлён до {FFB48A}v%s{FFFFFF}',
     loadScripts = '. %s: {FFB48A}/hub',
     loadManager = ', вышла {FFB48A}v%s{FFFFFF}. Обновить: {FFB48A}/hub',
@@ -1849,6 +1851,12 @@ end
 function main()
     if not isSampLoaded() or not isSampfuncsLoaded() then return end
     while not isSampAvailable() do wait(100) end
+    -- MonetLoader (Android) has no Arizona CEF window: say so and leave before anything touches disk or network.
+    if MONET_VERSION ~= nil then
+        sampAddChatMessage(TAG .. toChat(TEXT.mobileOnly), -1)
+        thisScript():unload()
+        return
+    end
 
     createDirectory(DATA_DIR)
     createDirectory(DL_DIR)
