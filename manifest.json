@@ -516,7 +516,7 @@
       "id": "dialog-plus",
       "name": "Dialog Plus",
       "filename": "[ArzHub] Dialog Plus.lua",
-      "version": "1.3.1",
+      "version": "1.3.2",
       "path": "scripts/dialog-plus.lua",
       "actual": true,
       "changelog": [
@@ -543,6 +543,13 @@
           "date": "2026-11-05",
           "notes": [
             "Мелкие исправления и доработки."
+          ]
+        },
+        {
+          "version": "1.3.2",
+          "date": "2026-11-21",
+          "notes": [
+            "Даты в начале пунктов (например в /history) больше не заменяются номером - номер дописывается перед ними."
           ]
         }
       ],

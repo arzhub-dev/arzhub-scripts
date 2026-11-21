@@ -1,9 +1,9 @@
 script_name('Dialog Plus')
 script_author('ArzHub')
-script_version('1.3.1')
+script_version('1.3.2')
 script_url('https://arzhub.top/hub/dialog-plus')
 
--- Forum topic (current version, discussion): https://www.blast.hk/threads/256216/
+-- Script page (current version, changelog): https://arzhub.top/hub/dialog-plus
 
 local moonloader = require('moonloader') -- download_status for the update check.
 local sampev = require('samp.events')
@@ -120,7 +120,8 @@ local BOOT_JS = ([==[
     }
     var ROW='.dialog-list-loop__list-item';
     var NUM_RE=/^\s*\[?(\d+)[\].]/;
-    var STRIP_RE=/^\s*(?:\[[^\]]*\]|\d+[.)])\s*/;
+    // Only a number or a short digit-free bullet; a bracketed date like [2026-11-20 18:43:43] stays.
+    var STRIP_RE=/^\s*(?:\[\d+\]|\[[^\]\d]{1,2}\]|\d+[.)])\s*/;
     // Grey [N] prefix and data-tmnum on every selectable row: server numbers are kept, unnumbered lists are numbered by position.
     function numberRows(){
         var rows=document.querySelectorAll(ROW);
@@ -365,7 +366,7 @@ function main()
     removeIfExists(thisScript().path .. '.manifest.tmp')
     wait(1500)
 
-    notify('Загружен {FFB48A}v' .. thisScript().version .. '{FFFFFF}. В списках пункт выбирается цифрой, повторное нажатие подтверждает. В «Забрать» есть кнопка MAX.')
+    notify('Загружен {FFB48A}v' .. thisScript().version .. '{FFFFFF}. В списках пункт выбирается цифрой, повторное нажатие подтверждает.')
     sampRegisterChatCommand('dpupdate', checkForUpdate)
     checkForUpdateSilently()
 
